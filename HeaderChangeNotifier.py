@@ -65,15 +65,8 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         print("[+] Header Change Notifier v{} loaded successfully!".format(self.VERSION))
     
     def _init_ui(self):
-        """
-        Initialize the user interface
-        """
         self._main_panel = JPanel(BorderLayout())
-        
-
         self._tabbed_pane = JTabbedPane()
-        
-
         self._create_changes_tab()
         self._create_settings_tab()
         self._create_about_tab()
@@ -82,19 +75,11 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         self._main_panel.add(self._tabbed_pane, BorderLayout.CENTER)
     
     def _create_changes_tab(self):
-        """
-        Create the main changes detection tab
-        """
-        changes_panel = JPanel(BorderLayout())
-        
-    
-        top_panel = JPanel(FlowLayout(FlowLayout.LEFT))
-        
 
+        changes_panel = JPanel(BorderLayout())
+        top_panel = JPanel(FlowLayout(FlowLayout.LEFT))
         clear_btn = JButton("Clear All", actionPerformed=self._clear_all_data)
         clear_btn.setPreferredSize(Dimension(100, 30))
-        
-
         export_btn = JButton("Export CSV", actionPerformed=self._export_to_csv)
         export_btn.setPreferredSize(Dimension(100, 30))
         
@@ -104,14 +89,18 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         top_panel.add(clear_btn)
         top_panel.add(export_btn)
         top_panel.add(JLabel("  |  "))
+        
         top_panel.add(self._stats_label)
         
         self._changes_table_model = DefaultTableModel()
+        
         self._changes_table_model.setColumnIdentifiers([
             "Timestamp", "URL", "Header", "Old Value", "New Value", "Risk Level"
         ])
         
+        
         self._changes_table = JTable(self._changes_table_model)
+        
         self._changes_table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF)
         
         column_widths = [150, 300, 200, 250, 250, 100]
@@ -130,9 +119,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         self._tabbed_pane.addTab("Header Changes", changes_panel)
     
     def _create_settings_tab(self):
-        """
-        Create the settings configuration tab
-        """
+
         settings_panel = JPanel(BorderLayout())
         
       
@@ -209,9 +196,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         self._tabbed_pane.addTab("Settings", settings_panel)
     
     def _create_about_tab(self):
-        """
-        Create the about/help tab
-        """
+
         about_panel = JPanel(BorderLayout())
         
         about_content = JPanel(GridBagLayout())
@@ -261,9 +246,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         self._tabbed_pane.addTab("About", about_panel)
     
     def _get_header_description(self, header):
-        """
-        Get description for a specific header
-        """
+
         descriptions = {
             'set-cookie': 'Session cookies and their security attributes',
             'content-security-policy': 'Content Security Policy rules',
@@ -311,10 +294,9 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             print("[-] Error processing HTTP message: {}".format(str(e)))
     
     def _process_headers(self, url, headers):
-        """
-        Process and compare headers for changes
-        """
+
         with self._lock:
+            
 
             current_headers = {}
             for header in headers[1:]:
@@ -342,9 +324,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             SwingUtilities.invokeLater(self._update_stats)
     
     def _compare_headers(self, url, old_headers, new_headers):
-        """
-        Compare header sets and detect changes
-        """
+
         all_headers = set(old_headers.keys()) | set(new_headers.keys())
         
         for header in all_headers:
@@ -369,9 +349,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
                     self._create_burp_alert(change_record)
     
     def _assess_risk_level(self, header, old_value, new_value):
-        """
-        Assess the risk level of a header change
-        """
+
 
         critical_headers = ['content-security-policy', 'x-frame-options']
         if header in critical_headers:
@@ -396,9 +374,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         return 'Low'
     
     def _create_burp_alert(self, change_record):
-        """
-        Create a Burp Suite alert for significant header changes
-        """
+
         try:
 
             issue = HeaderChangeScanIssue(
@@ -410,9 +386,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
             print("[-] Error creating Burp alert: {}".format(str(e)))
     
     def _add_change_to_table(self, change_record):
-        """
-        Add a change record to the UI table
-        """
+
         row_data = [
             change_record['timestamp'].toString(),
             change_record['url'],
@@ -424,9 +398,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         self._changes_table_model.addRow(row_data)
     
     def _update_stats(self):
-        """
-        Update the statistics label
-        """
+
         changes_count = len(self._detected_changes)
         urls_count = len(self._header_storage)
         self._stats_label.setText(
@@ -434,9 +406,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         )
     
     def _clear_all_data(self, event):
-        """
-        Clear all stored data and table
-        """
+
         with self._lock:
             self._header_storage.clear()
             self._detected_changes[:] = []
@@ -451,9 +421,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         )
     
     def _export_to_csv(self, event):
-        """
-        Export detected changes to CSV file
-        """
+
         if not self._detected_changes:
             JOptionPane.showMessageDialog(
                 self._main_panel,
@@ -504,9 +472,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
                 )
     
     def _add_custom_header(self, event):
-        """
-        Add a custom header to track
-        """
+
         header_name = self._custom_header_field.getText().strip().lower()
         
         if not header_name:
@@ -541,9 +507,7 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
         )
     
     def _save_settings(self, event):
-        """
-        Save the current settings
-        """
+
 
         for header, checkbox in self._header_checkboxes.items():
             self._tracked_headers[header] = checkbox.isSelected()
@@ -557,21 +521,15 @@ class BurpExtender(IBurpExtender, ITab, IHttpListener):
     
 
     def getTabCaption(self):
-        """
-        Return the tab caption
-        """
+
         return self.EXTENSION_NAME
     
     def getUiComponent(self):
-        """
-        Return the UI component
-        """
+
         return self._main_panel
 
 class RiskLevelCellRenderer(DefaultTableCellRenderer):
-    """
-    Custom cell renderer for risk level column
-    """
+
     
     def getTableCellRendererComponent(self, table, value, isSelected, hasFocus, row, column):
         component = DefaultTableCellRenderer.getTableCellRendererComponent(
@@ -591,9 +549,7 @@ class RiskLevelCellRenderer(DefaultTableCellRenderer):
         return component
 
 class HeaderChangeScanIssue:
-    """
-    Custom scan issue for Burp Suite alerts
-    """
+
     
     def __init__(self, url_bytes, change_record):
         self._url_bytes = url_bytes
