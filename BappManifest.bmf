@@ -1,0 +1,13 @@
+Uuid: 93af1c4356884fbe9bb470aae6f8e6e0
+ExtensionType: 2
+Name: Header Change Notifier
+RepoName: header-change-notifier
+ScreenVersion: 2.0.0
+SerialVersion: 1
+MinPlatformVersion: 2
+ProOnly: True
+Author: MohamedXploit
+ShortDescription: This extension monitors and alerts about changes in HTTP response headers for the same URL, categorizing changes by risk level, with customizable tracking and export features.
+EntryPoint: HeaderChangeNotifier.py
+BuildCommand: 
+SupportedProducts: Pro

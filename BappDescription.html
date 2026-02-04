@@ -1,0 +1,39 @@
+Header Change Notifier is a professional Burp Suite extension designed to monitor and detect changes in HTTP response headers. As headers change between requests made to the same URL, an alert is triggered. This extension is an excellent tool for security researchers, penetration testers, and bug bounty hunters who actively seek to identify security misconfigurations via header changes.
+
+<h2>Features</h2>
+
+<ul>
+<li><strong>Real-time Header Monitoring</strong>: The extension detects automatic changes in HTTP response headers.</li>
+<li><strong>Security-Focused</strong>: The tool is already pre-configured to keep track of critical security headers.</li>
+<li><strong>Risk Assessment</strong>: It categorizes changes by risk level from Critical/High/Medium/Low.</li>
+<li><strong>Professional UI</strong>: It is embedded with a clean, table-based interface that integrates perfectly into Burp Suite.</li>
+<li><strong>Customizable Tracking</strong>: Users can add or remove headers to be monitored in accordance with their needs.</li>
+<li><strong>Export Functionality</strong>: The module can export all detected changes for reporting in CSV format.</li>
+<li><strong>Burp Suite Integration</strong>: The extension creates alerts in Burps issue tracker for any high-risk changes.</li>
+<li><strong>Performance Optimized</strong>: The software boasts efficient memory usage and fast processing.</li>
+</ul>
+
+The extension comes pre-configured to monitor the following critical security headers:
+
+<pre class=pre-wrap><code class=Code>
+Set-Cookie: High risk (Session cookies and security attributes)
+Content-Security-Policy: High risk (CSP rules and restrictions)
+X-Frame-Options: Medium risk (Clickjacking protection)
+X-Content-Type-Options: Medium risk (MIME sniffing protection)
+Referrer-Policy: Medium risk (Referrer information control)
+Strict-Transport-Security: High risk (HTTPS enforcement)
+X-XSS-Protection: Medium risk (XSS filtering settings)
+Access-Control-Allow-Origin: Medium risk (CORS origin permissions)
+Server: Low risk (Web server identification)
+X-Powered-By: Low risk (Technology stack disclosure)
+</code></pre>
+
+<h2>Usage</h2>
+
+The extension automatically starts monitoring HTTP responses immediately after installation. To see the detected changes, visit the Header Change Notifier tab, and review alerts for high-risk changes in Burps main issue tracker.
+
+To configure settings, click on the Settings tab within the extension. Users can check or uncheck headers they want to monitor and add custom headers using the input field. Click on Save Settings to apply these changes.
+
+To export results, select the Export CSV button in the Header Changes tab, choose your desired save location, and save. The CSV exported contains all detected changes along with timestamps and risk levels. 
+
+This extension can find application in different scenarios such as security testing, bug bounty hunting, development testing, compliance monitoring, and red team operations.
