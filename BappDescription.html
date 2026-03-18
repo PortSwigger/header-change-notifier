@@ -1,42 +1,34 @@
 <p>
-    Header Change Notifier monitors HTTP response headers and alerts when they change between requests to the same URL.
-    It helps identify security misconfigurations, server changes, and potential vulnerabilities by tracking critical
-    security headers during testing.
+    Header Change Notifier detects when HTTP response headers change between requests to the same URL. Using passive
+    scanning, it tracks security-critical headers across browsing sessions and raises scanner issues when changes are
+    found — making it easier to spot security misconfigurations, inconsistent server behaviour, and weakened security
+    policies during testing.
 </p>
 
 <h2>Features</h2>
 <ul>
-    <li>Passive scanner integration that respects scope settings and creates alerts in the issue tracker</li>
-    <li>Pre-configured tracking of critical security headers including CSP, HSTS, and cookie attributes</li>
-    <li>Risk level assessment that categorizes changes as Critical, High, Medium, or Low severity</li>
-    <li>Customizable header tracking with support for adding custom headers to monitor</li>
-    <li>CSV export functionality for reporting detected changes with timestamps</li>
-    <li>Clean table-based interface showing URL, header name, old and new values, and risk level</li>
-</ul>
-
-<p>
-    The extension monitors these security headers by default:
-</p>
-
-<ul>
-    <li><code class="InlineCode">Set-Cookie</code> (High) - Session cookies and security attributes</li>
-    <li><code class="InlineCode">Content-Security-Policy</code> (High) - CSP rules and restrictions</li>
-    <li><code class="InlineCode">X-Frame-Options</code> (Medium) - Clickjacking protection</li>
-    <li><code class="InlineCode">X-Content-Type-Options</code> (Medium) - MIME sniffing protection</li>
-    <li><code class="InlineCode">Referrer-Policy</code> (Medium) - Referrer information control</li>
-    <li><code class="InlineCode">Strict-Transport-Security</code> (High) - HTTPS enforcement</li>
-    <li><code class="InlineCode">X-XSS-Protection</code> (Medium) - XSS filtering settings</li>
-    <li><code class="InlineCode">Access-Control-Allow-Origin</code> (Medium) - CORS origin permissions</li>
-    <li><code class="InlineCode">Server</code> (Low) - Web server identification</li>
-    <li><code class="InlineCode">X-Powered-By</code> (Low) - Technology stack disclosure</li>
+    <li>Passive scanner integration that respects scope settings and automatically raises issues in the Scanner tab for
+        high-risk header changes</li>
+    <li>Pre-configured tracking of ten security headers, including <code
+            class="InlineCode">Content-Security-Policy</code>, <code
+            class="InlineCode">Strict-Transport-Security</code>, <code class="InlineCode">Set-Cookie</code>, and <code
+            class="InlineCode">Access-Control-Allow-Origin</code></li>
+    <li>Automatic risk classification — changes are rated Critical, High, Medium, or Low based on the header type and
+        the nature of the change (e.g. removal of a <code class="InlineCode">Secure</code> or <code
+            class="InlineCode">HttpOnly</code> cookie attribute raises the severity)</li>
+    <li>Customisable header list — enable or disable default headers, or add any custom header to monitor</li>
+    <li>CSV export of all detected changes, including timestamps, old and new values, and risk levels</li>
 </ul>
 
 <h2>Usage</h2>
 <ol>
-    <li>Once installed, the extension automatically monitors HTTP responses using passive scanning</li>
-    <li>Configure your target scope in Burp Suite to control which requests are monitored</li>
-    <li>Navigate the Header Change Notifier tab to view all detected changes in the table</li>
-    <li>Review high-risk changes in the Scanner Issues tab where alerts are automatically created</li>
-    <li>Customize tracked headers in the Settings tab by checking or unchecking headers, or adding custom headers</li>
-    <li>Export detected changes to CSV by clicking the Export CSV button for reporting purposes</li>
+    <li>Once loaded, the extension begins monitoring HTTP responses automatically via passive scanning</li>
+    <li>Browse or scan your target; the extension records the first response for each URL and flags subsequent responses
+        where tracked headers differ</li>
+    <li>Open the "Header Change Notifier" tab to review detected changes in a table showing the URL, header name, old
+        value, new value, and risk level</li>
+    <li>Check the Scanner tab for issues raised automatically against high-risk header changes</li>
+    <li>Adjust which headers are tracked under the "Settings" tab, then click "Save Settings" to apply; add unlisted headers
+        using the custom header input field</li>
+    <li>Click "Export CSV" to save all detected changes to a file</li>
 </ol>

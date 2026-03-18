@@ -7,7 +7,7 @@ SerialVersion: 2
 MinPlatformVersion: 2
 ProOnly: True
 Author: MohamedXploit
-ShortDescription: Monitors and alerts about changes in HTTP response headers for the same URL, categorizing changes by risk level, with customizable tracking and export features.
+ShortDescription: Monitors and alerts about changes in HTTP response headers for the same URL.
 EntryPoint: HeaderChangeNotifier.py
 BuildCommand: 
 SupportedProducts: Pro
