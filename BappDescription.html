@@ -1,7 +1,7 @@
 <p>
     Header Change Notifier detects when HTTP response headers change between requests to the same URL. Using passive
     scanning, it tracks security-critical headers across browsing sessions and raises scanner issues when changes are
-    found — making it easier to spot security misconfigurations, inconsistent server behaviour, and weakened security
+    found. This makes it easier to spot security misconfigurations, inconsistent server behaviour, and weakened security
     policies during testing.
 </p>
 
@@ -13,10 +13,10 @@
             class="InlineCode">Content-Security-Policy</code>, <code
             class="InlineCode">Strict-Transport-Security</code>, <code class="InlineCode">Set-Cookie</code>, and <code
             class="InlineCode">Access-Control-Allow-Origin</code></li>
-    <li>Automatic risk classification — changes are rated Critical, High, Medium, or Low based on the header type and
+    <li>Automatic risk classification: changes are rated Critical, High, Medium, or Low based on the header type and
         the nature of the change (e.g. removal of a <code class="InlineCode">Secure</code> or <code
             class="InlineCode">HttpOnly</code> cookie attribute raises the severity)</li>
-    <li>Customisable header list — enable or disable default headers, or add any custom header to monitor</li>
+    <li>Customisable header list: Enable or disable default headers, or add any custom header to monitor</li>
     <li>CSV export of all detected changes, including timestamps, old and new values, and risk levels</li>
 </ul>
 
