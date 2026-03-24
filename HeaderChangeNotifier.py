@@ -77,9 +77,7 @@ class BurpExtender(IBurpExtender, ITab, IScannerCheck, IMessageEditorController)
 
         print("[+] Header Change Notifier v{} loaded successfully!".format(self.VERSION))
 
-    # ------------------------------------------------------------------
-    # UI Construction
-    # ------------------------------------------------------------------
+
 
     def _init_ui(self):
         self._main_panel  = JPanel(BorderLayout())
@@ -91,7 +89,6 @@ class BurpExtender(IBurpExtender, ITab, IScannerCheck, IMessageEditorController)
     def _create_changes_tab(self):
         outer = JPanel(BorderLayout())
 
-        # ── toolbar ──────────────────────────────────────────────────
         toolbar = JPanel(FlowLayout(FlowLayout.LEFT))
 
         clear_btn = JButton("Clear All", actionPerformed=self._clear_all_data)
@@ -108,7 +105,6 @@ class BurpExtender(IBurpExtender, ITab, IScannerCheck, IMessageEditorController)
         toolbar.add(JLabel("  |  "))
         toolbar.add(self._stats_label)
 
-        # ── table ─────────────────────────────────────────────────────
         self._changes_table_model = ReadOnlyTableModel(
             [], ["Timestamp", "URL", "Header", "Old Value", "New Value", "Risk Level"]
         )
@@ -135,7 +131,6 @@ class BurpExtender(IBurpExtender, ITab, IScannerCheck, IMessageEditorController)
         # ── detail panel (issue info + request/response editors) ──────
         detail_panel = self._create_detail_panel()
 
-        # ── split pane ────────────────────────────────────────────────
         split = JSplitPane(JSplitPane.VERTICAL_SPLIT, table_scroll, detail_panel)
         split.setResizeWeight(0.45)
         split.setDividerLocation(300)
@@ -183,7 +178,6 @@ class BurpExtender(IBurpExtender, ITab, IScannerCheck, IMessageEditorController)
         gbc.insets = Insets(10, 10, 15, 10)
         top.add(title_label, gbc)
 
-        # ── dynamic header list ───────────────────────────────────────
         list_label = JLabel("Tracked Headers")
         list_label.setFont(Font("Dialog", Font.PLAIN, 12))
         gbc.gridy = 1; gbc.insets = Insets(0, 20, 4, 20)
@@ -216,7 +210,6 @@ class BurpExtender(IBurpExtender, ITab, IScannerCheck, IMessageEditorController)
         gbc.insets = Insets(0, 20, 15, 20)
         top.add(btn_panel, gbc)
 
-        # ── add custom header ─────────────────────────────────────────
         add_label = JLabel("Add Custom Header:")
         add_label.setFont(Font("Dialog", Font.BOLD, 12))
         gbc.gridy = 4; gbc.gridwidth = 2
@@ -237,9 +230,6 @@ class BurpExtender(IBurpExtender, ITab, IScannerCheck, IMessageEditorController)
         settings_panel.add(top, BorderLayout.NORTH)
         self._tabbed_pane.addTab("Settings", settings_panel)
 
-    # ------------------------------------------------------------------
-    # IMessageEditorController
-    # ------------------------------------------------------------------
 
     def getHttpService(self):
         if self._current_request_response:
@@ -506,7 +496,6 @@ class BurpExtender(IBurpExtender, ITab, IScannerCheck, IMessageEditorController)
                     "Export Error", JOptionPane.ERROR_MESSAGE
                 )
 
-    # ── dynamic settings actions ───────────────────────────────────────
 
     def _add_custom_header(self, event):
         """Add header to both the live dict and the JList immediately."""
@@ -572,10 +561,8 @@ class BurpExtender(IBurpExtender, ITab, IScannerCheck, IMessageEditorController)
         return self._main_panel
 
 
-# ──────────────────────────────────────────────────────────────────────
 # Read-only table model  (subclassing is the correct Jython approach;
 # monkey-patching isCellEditable raises TypeError on Java methods)
-# ──────────────────────────────────────────────────────────────────────
 
 class ReadOnlyTableModel(DefaultTableModel):
 
@@ -586,9 +573,7 @@ class ReadOnlyTableModel(DefaultTableModel):
         return False
 
 
-# ──────────────────────────────────────────────────────────────────────
 # Helper: table row selection listener
-# ──────────────────────────────────────────────────────────────────────
 
 class TableSelectionHandler(ListSelectionListener):
 
@@ -603,9 +588,7 @@ class TableSelectionHandler(ListSelectionListener):
             SwingUtilities.invokeLater(lambda: self._extender._on_row_selected(row))
 
 
-# ──────────────────────────────────────────────────────────────────────
 # Risk level cell renderer – foreground colour only, theme-safe
-# ──────────────────────────────────────────────────────────────────────
 
 class RiskLevelCellRenderer(DefaultTableCellRenderer):
 
@@ -625,9 +608,7 @@ class RiskLevelCellRenderer(DefaultTableCellRenderer):
         return comp
 
 
-# ──────────────────────────────────────────────────────────────────────
 # Settings list renderer – shows checkbox state inline
-# ──────────────────────────────────────────────────────────────────────
 
 class HeaderListCellRenderer(JCheckBox, ListCellRenderer):
     """
@@ -653,9 +634,7 @@ class HeaderListCellRenderer(JCheckBox, ListCellRenderer):
         return self
 
 
-# ──────────────────────────────────────────────────────────────────────
 # Custom IScanIssue
-# ──────────────────────────────────────────────────────────────────────
 
 class HeaderChangeScanIssue(IScanIssue):
 
