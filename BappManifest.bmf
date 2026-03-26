@@ -2,8 +2,8 @@ Uuid: 93af1c4356884fbe9bb470aae6f8e6e0
 ExtensionType: 2
 Name: Header Change Notifier
 RepoName: header-change-notifier
-ScreenVersion: 2.0.0
-SerialVersion: 4
+ScreenVersion: 2.1.0
+SerialVersion: 5
 MinPlatformVersion: 2
 ProOnly: True
 Author: MohamedXploit
