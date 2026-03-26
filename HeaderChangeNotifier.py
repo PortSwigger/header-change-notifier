@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
 # Header Change Notifier - Burp Suite Extension
-# Version: 2.0.0
+# Version: 2.1.0
 # Author: Mohamed Essam
 # Description: Detects and alerts when HTTP response headers change between requests (Passive Scanner)
 
-from burp import IBurpExtender, ITab, IScannerCheck, IScanIssue
+from burp import IBurpExtender, ITab, IScannerCheck, IScanIssue, IMessageEditorController
 from java.awt import BorderLayout, FlowLayout, GridBagLayout, GridBagConstraints, Insets, Dimension, Color, Font
-from javax.swing import JPanel, JTabbedPane, JTable, JScrollPane, JButton, JLabel, JTextField, JCheckBox, JOptionPane, JFileChooser
+from javax.swing import (JPanel, JTabbedPane, JTable, JScrollPane, JButton, JLabel, JTextField,
+                         JCheckBox, JOptionPane, JFileChooser, JSplitPane, JList, DefaultListModel,
+                         ListSelectionModel, BorderFactory, SwingConstants, UIManager, JTextArea)
 from javax.swing.table import DefaultTableModel, DefaultTableCellRenderer
 from javax.swing import SwingUtilities
+from javax.swing import ListCellRenderer
+from javax.swing.event import ListSelectionListener
 from java.io import File
 from java.net import URL
 from java.util import Date
@@ -16,360 +20,390 @@ import threading
 import time
 import csv
 
-class BurpExtender(IBurpExtender, ITab, IScannerCheck):
-    
+
+def _get_risk_colors(risk_level):
+    """
+    Return (foreground, background) colors for a risk level that work in both
+    Burp light and dark themes.  We use saturated foreground text on a
+    transparent/default background rather than tinted cell backgrounds so that
+    the colours remain readable regardless of the theme's base palette.
+    """
+    colors = {
+        "Critical": (Color(200, 50,  50),  None),   # Bold red fg
+        "High":     (Color(210, 120, 30),  None),   # Orange fg
+        "Medium":   (Color(160, 130, 0),   None),   # Dark yellow fg
+        "Low":      (Color(40,  140, 60),  None),   # Green fg
+    }
+    return colors.get(risk_level, (None, None))
+
+
+class BurpExtender(IBurpExtender, ITab, IScannerCheck, IMessageEditorController):
+
     def registerExtenderCallbacks(self, callbacks):
         """Initialize the extension"""
         self._callbacks = callbacks
         self._helpers = callbacks.getHelpers()
-        
-        # Extension metadata
+
         self.EXTENSION_NAME = "Header Change Notifier"
-        self.VERSION = "2.0.0"
-        
+        self.VERSION = "2.1.0"
+
         callbacks.setExtensionName(self.EXTENSION_NAME)
-        
-        # Initialize data structures
-        self._header_storage = {}
-        self._detected_changes = []
-        self._lock = threading.Lock()
+
+        # Data structures
+        self._header_storage   = {}
+        self._detected_changes = []          # list of change_record dicts
+        self._scan_issues      = {}          # change_record id -> HeaderChangeScanIssue
+        self._lock             = threading.Lock()
+
         self._tracked_headers = {
-            'set-cookie': True,
-            'content-security-policy': True,
-            'x-frame-options': True,
-            'x-content-type-options': True,
-            'referrer-policy': True,
+            'set-cookie':                True,
+            'content-security-policy':   True,
+            'x-frame-options':           True,
+            'x-content-type-options':    True,
+            'referrer-policy':           True,
             'strict-transport-security': True,
-            'x-xss-protection': True,
+            'x-xss-protection':          True,
             'access-control-allow-origin': True,
-            'server': True,
-            'x-powered-by': True
+            'server':                    True,
+            'x-powered-by':              True,
         }
-        
+
+        # Currently selected request/response for the message editors
+        self._current_request_response = None
+
         self._init_ui()
-        
-        # Register as passive scanner
         callbacks.registerScannerCheck(self)
-        
         callbacks.addSuiteTab(self)
-        
+
         print("[+] Header Change Notifier v{} loaded successfully!".format(self.VERSION))
-        print("[+] Using passive scanner implementation for better scope control")
-    
+
+
+
     def _init_ui(self):
-        self._main_panel = JPanel(BorderLayout())
+        self._main_panel  = JPanel(BorderLayout())
         self._tabbed_pane = JTabbedPane()
         self._create_changes_tab()
         self._create_settings_tab()
-        self._create_about_tab()
-        
         self._main_panel.add(self._tabbed_pane, BorderLayout.CENTER)
-    
+
     def _create_changes_tab(self):
-        changes_panel = JPanel(BorderLayout())
-        top_panel = JPanel(FlowLayout(FlowLayout.LEFT))
+        outer = JPanel(BorderLayout())
+
+        toolbar = JPanel(FlowLayout(FlowLayout.LEFT))
+
         clear_btn = JButton("Clear All", actionPerformed=self._clear_all_data)
         clear_btn.setPreferredSize(Dimension(100, 30))
+
         export_btn = JButton("Export CSV", actionPerformed=self._export_to_csv)
-        export_btn.setPreferredSize(Dimension(100, 30))
-        
-        self._stats_label = JLabel("Changes detected: 0 | URLs monitored: 0")
+        export_btn.setPreferredSize(Dimension(130, 30))          # fix: was too narrow
+
+        self._stats_label = JLabel("Changes detected: 0  |  URLs monitored: 0")
         self._stats_label.setFont(Font("Dialog", Font.PLAIN, 12))
-        
-        top_panel.add(clear_btn)
-        top_panel.add(export_btn)
-        top_panel.add(JLabel("  |  "))
-        top_panel.add(self._stats_label)
-        
-        self._changes_table_model = DefaultTableModel()
-        self._changes_table_model.setColumnIdentifiers([
-            "Timestamp", "URL", "Header", "Old Value", "New Value", "Risk Level"
-        ])
-        
+
+        toolbar.add(clear_btn)
+        toolbar.add(export_btn)
+        toolbar.add(JLabel("  |  "))
+        toolbar.add(self._stats_label)
+
+        self._changes_table_model = ReadOnlyTableModel(
+            [], ["Timestamp", "URL", "Header", "Old Value", "New Value", "Risk Level"]
+        )
+
         self._changes_table = JTable(self._changes_table_model)
         self._changes_table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF)
-        
-        column_widths = [150, 300, 200, 250, 250, 100]
-        for i, width in enumerate(column_widths):
-            self._changes_table.getColumnModel().getColumn(i).setPreferredWidth(width)
-        
-        risk_renderer = RiskLevelCellRenderer()
-        self._changes_table.getColumnModel().getColumn(5).setCellRenderer(risk_renderer)
-        
+        self._changes_table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+
+        col_widths = [150, 300, 200, 250, 250, 100]
+        for i, w in enumerate(col_widths):
+            self._changes_table.getColumnModel().getColumn(i).setPreferredWidth(w)
+
+        self._changes_table.getColumnModel().getColumn(5).setCellRenderer(
+            RiskLevelCellRenderer()
+        )
+
+        # Selection listener → update detail/editor panels
+        self._changes_table.getSelectionModel().addListSelectionListener(
+            TableSelectionHandler(self)
+        )
+
         table_scroll = JScrollPane(self._changes_table)
-        table_scroll.setPreferredSize(Dimension(800, 400))
-        
-        changes_panel.add(top_panel, BorderLayout.NORTH)
-        changes_panel.add(table_scroll, BorderLayout.CENTER)
-        
-        self._tabbed_pane.addTab("Header Changes", changes_panel)
-    
+
+        # ── detail panel (issue info + request/response editors) ──────
+        detail_panel = self._create_detail_panel()
+
+        split = JSplitPane(JSplitPane.VERTICAL_SPLIT, table_scroll, detail_panel)
+        split.setResizeWeight(0.45)
+        split.setDividerLocation(300)
+
+        outer.add(toolbar, BorderLayout.NORTH)
+        outer.add(split,   BorderLayout.CENTER)
+
+        self._tabbed_pane.addTab("Header Changes", outer)
+
+    def _create_detail_panel(self):
+        """
+        Returns a tabbed pane with:
+          • Issue Details  textual summary of the selected change / ScanIssue
+          • Request        Burp message editor (read-only)
+          • Response       Burp message editor (read-only)
+        """
+        self._detail_tabs = JTabbedPane()
+
+        # Issue details
+        self._detail_text = JTextArea()
+        self._detail_text.setEditable(False)
+        self._detail_text.setLineWrap(True)
+        self._detail_text.setWrapStyleWord(True)
+        self._detail_text.setFont(Font("Monospaced", Font.PLAIN, 12))
+        self._detail_text.setText("Select a row to view issue details.")
+        self._detail_tabs.addTab("Issue Details", JScrollPane(self._detail_text))
+
+        # Request / Response editors (Burp native viewers)
+        self._request_editor  = self._callbacks.createMessageEditor(self, False)
+        self._response_editor = self._callbacks.createMessageEditor(self, False)
+        self._detail_tabs.addTab("Request",  self._request_editor.getComponent())
+        self._detail_tabs.addTab("Response", self._response_editor.getComponent())
+
+        return self._detail_tabs
+
     def _create_settings_tab(self):
         settings_panel = JPanel(BorderLayout())
-        
-        main_settings = JPanel(GridBagLayout())
+
+        top = JPanel(GridBagLayout())
         gbc = GridBagConstraints()
-        
+
         title_label = JLabel("Header Tracking Configuration")
         title_label.setFont(Font("Dialog", Font.BOLD, 16))
-        gbc.gridx = 0
-        gbc.gridy = 0
-        gbc.gridwidth = 2
-        gbc.insets = Insets(10, 10, 20, 10)
-        main_settings.add(title_label, gbc)
-        
-        self._header_checkboxes = {}
-        row = 1
-        
-        for header, enabled in self._tracked_headers.items():
-            gbc.gridx = 0
-            gbc.gridy = row
-            gbc.gridwidth = 1
-            gbc.insets = Insets(5, 20, 5, 10)
-            gbc.anchor = GridBagConstraints.WEST
-            
-            checkbox = JCheckBox(header.replace('-', ' ').title(), enabled)
-            self._header_checkboxes[header] = checkbox
-            main_settings.add(checkbox, gbc)
-            
-            gbc.gridx = 1
-            gbc.insets = Insets(5, 10, 5, 20)
-            description = self._get_header_description(header)
-            desc_label = JLabel(description)
-            desc_label.setFont(Font("Dialog", Font.ITALIC, 11))
-            main_settings.add(desc_label, gbc)
-            
-            row += 1
-        
-        gbc.gridx = 0
-        gbc.gridy = row
-        gbc.gridwidth = 2
-        gbc.insets = Insets(20, 20, 10, 20)
-        custom_label = JLabel("Add Custom Header:")
-        custom_label.setFont(Font("Dialog", Font.BOLD, 12))
-        main_settings.add(custom_label, gbc)
-        
-        row += 1
-        gbc.gridy = row
+        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 2
+        gbc.insets = Insets(10, 10, 15, 10)
+        top.add(title_label, gbc)
+
+        list_label = JLabel("Tracked Headers")
+        list_label.setFont(Font("Dialog", Font.PLAIN, 12))
+        gbc.gridy = 1; gbc.insets = Insets(0, 20, 4, 20)
+        top.add(list_label, gbc)
+
+        self._header_list_model = DefaultListModel()
+        self._header_jlist      = JList(self._header_list_model)
+        self._header_jlist.setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
+        self._header_jlist.setCellRenderer(HeaderListCellRenderer(self._tracked_headers))
+
+        # Populate list
+        for h in sorted(self._tracked_headers.keys()):
+            self._header_list_model.addElement(h)
+
+        list_scroll = JScrollPane(self._header_jlist)
+        list_scroll.setPreferredSize(Dimension(500, 200))
+
+        gbc.gridy = 2; gbc.gridwidth = 2; gbc.fill = GridBagConstraints.BOTH
+        gbc.insets = Insets(0, 20, 10, 20)
+        top.add(list_scroll, gbc)
+
+        # Toggle + Remove buttons
+        btn_panel = JPanel(FlowLayout(FlowLayout.LEFT))
+        toggle_btn = JButton("Toggle Enable/Disable", actionPerformed=self._toggle_header)
+        remove_btn = JButton("Remove Selected",       actionPerformed=self._remove_header)
+        btn_panel.add(toggle_btn)
+        btn_panel.add(remove_btn)
+
+        gbc.gridy = 3; gbc.fill = GridBagConstraints.NONE
+        gbc.insets = Insets(0, 20, 15, 20)
+        top.add(btn_panel, gbc)
+
+        add_label = JLabel("Add Custom Header:")
+        add_label.setFont(Font("Dialog", Font.BOLD, 12))
+        gbc.gridy = 4; gbc.gridwidth = 2
         gbc.insets = Insets(5, 20, 5, 20)
-        gbc.fill = GridBagConstraints.HORIZONTAL
-        
-        custom_panel = JPanel(FlowLayout(FlowLayout.LEFT))
-        self._custom_header_field = JTextField(20)
-        add_custom_btn = JButton("Add", actionPerformed=self._add_custom_header)
-        custom_panel.add(self._custom_header_field)
-        custom_panel.add(add_custom_btn)
-        main_settings.add(custom_panel, gbc)
-        
-        row += 1
-        gbc.gridy = row
-        gbc.insets = Insets(30, 20, 20, 20)
-        gbc.fill = GridBagConstraints.NONE
-        gbc.anchor = GridBagConstraints.CENTER
-        
-        save_btn = JButton("Save Settings", actionPerformed=self._save_settings)
-        save_btn.setPreferredSize(Dimension(150, 35))
-        main_settings.add(save_btn, gbc)
-        
-        settings_panel.add(main_settings, BorderLayout.NORTH)
+        top.add(add_label, gbc)
+
+        self._custom_header_field = JTextField(25)
+        add_btn = JButton("Add", actionPerformed=self._add_custom_header)
+
+        custom_row = JPanel(FlowLayout(FlowLayout.LEFT))
+        custom_row.add(self._custom_header_field)
+        custom_row.add(add_btn)
+
+        gbc.gridy = 5
+        gbc.insets = Insets(0, 20, 20, 20)
+        top.add(custom_row, gbc)
+
+        settings_panel.add(top, BorderLayout.NORTH)
         self._tabbed_pane.addTab("Settings", settings_panel)
-    
-    def _create_about_tab(self):
-        about_panel = JPanel(BorderLayout())
-        
-        about_content = JPanel(GridBagLayout())
-        gbc = GridBagConstraints()
-        
-        title = JLabel("Header Change Notifier v{}".format(self.VERSION))
-        title.setFont(Font("Dialog", Font.BOLD, 18))
-        gbc.gridx = 0
-        gbc.gridy = 0
-        gbc.insets = Insets(20, 20, 10, 20)
-        about_content.add(title, gbc)
-        
-        description = """
-        This extension monitors HTTP response headers and alerts you when they change
-        between requests to the same URL. It's particularly useful for:
-        
-        - Detecting security misconfigurations
-        - Monitoring CSP policy changes
-        - Tracking cookie attribute modifications
-        - Identifying server changes during penetration testing
-        
-        Features:
-        + Real-time header change detection via passive scanning
-        + Respects Burp Suite scope settings
-        + Customizable header tracking
-        + Risk level assessment
-        + CSV export functionality
-        + Clean, professional interface
-        
-        Usage:
-        1. Configure which headers to track in the Settings tab
-        2. Set your target scope in Burp Suite
-        3. Run an active or passive scan, or use the Proxy
-        4. Check the Header Changes tab and Scanner Issues for detected modifications
-        5. Export results for reporting
-        
-        Note: This extension uses passive scanning, so it respects your configured
-        scope and integrates seamlessly with Burp's scanning workflow.
-        """
-        
-        desc_label = JLabel("<html><div style='width: 500px;'>{}</div></html>".format(
-            description.replace('\n', '<br>')
-        ))
-        desc_label.setFont(Font("Dialog", Font.PLAIN, 12))
-        gbc.gridy = 1
-        gbc.insets = Insets(10, 20, 20, 20)
-        about_content.add(desc_label, gbc)
-        
-        about_panel.add(about_content, BorderLayout.NORTH)
-        self._tabbed_pane.addTab("About", about_panel)
-    
-    def _get_header_description(self, header):
-        descriptions = {
-            'set-cookie': 'Session cookies and their security attributes',
-            'content-security-policy': 'Content Security Policy rules',
-            'x-frame-options': 'Clickjacking protection settings',
-            'x-content-type-options': 'MIME type sniffing protection',
-            'referrer-policy': 'Referrer information control',
-            'strict-transport-security': 'HTTPS enforcement policy',
-            'x-xss-protection': 'XSS filtering settings',
-            'access-control-allow-origin': 'CORS origin permissions',
-            'server': 'Web server identification',
-            'x-powered-by': 'Technology stack disclosure'
-        }
-        return descriptions.get(header, 'Custom security header')
-    
-    # IScannerCheck implementation
+
+
+    def getHttpService(self):
+        if self._current_request_response:
+            return self._current_request_response.getHttpService()
+        return None
+
+    def getRequest(self):
+        if self._current_request_response:
+            return self._current_request_response.getRequest()
+        return None
+
+    def getResponse(self):
+        if self._current_request_response:
+            return self._current_request_response.getResponse()
+        return None
+
+    # ------------------------------------------------------------------
+    # Table selection handler (called from TableSelectionHandler)
+    # ------------------------------------------------------------------
+
+    def _on_row_selected(self, row_index):
+        if row_index < 0 or row_index >= len(self._detected_changes):
+            return
+
+        change_record = self._detected_changes[row_index]
+        issue         = self._scan_issues.get(id(change_record))
+
+        # Update request/response editors
+        brr = change_record.get('baseRequestResponse')
+        if brr:
+            self._current_request_response = brr
+            self._request_editor.setMessage(brr.getRequest(),  True)
+            self._response_editor.setMessage(brr.getResponse(), False)
+        else:
+            self._current_request_response = None
+            self._request_editor.setMessage(bytearray(), True)
+            self._response_editor.setMessage(bytearray(), False)
+
+        # Update issue details text
+        old_val = change_record['old_value'] or "(header was not present)"
+        new_val = change_record['new_value'] or "(header was removed)"
+        lines = [
+            "Header      : {}".format(change_record['header']),
+            "URL         : {}".format(change_record['url']),
+            "Risk Level  : {}".format(change_record['risk_level']),
+            "Detected    : {}".format(change_record['timestamp'].toString()),
+            "",
+            "Previous Value:",
+            "  {}".format(old_val),
+            "",
+            "New Value:",
+            "  {}".format(new_val),
+        ]
+
+        if issue:
+            lines += [
+                "",
+                "Scanner Issue",
+                "Name        : {}".format(issue.getIssueName()),
+                "Severity    : {}".format(issue.getSeverity()),
+                "Confidence  : {}".format(issue.getConfidence()),
+                "",
+                "Background:",
+            ]
+            # Strip basic HTML tags for plain-text display
+            bg = issue.getIssueBackground()
+            for tag in ["<p>","</p>","<ul>","</ul>","<li>","</li>","<b>","</b>","<pre>","</pre>"]:
+                bg = bg.replace(tag, "")
+            lines += [l.strip() for l in bg.strip().splitlines() if l.strip()]
+
+        self._detail_text.setText("\n".join(lines))
+        self._detail_text.setCaretPosition(0)
+
+    # ------------------------------------------------------------------
+    # IScannerCheck
+    # ------------------------------------------------------------------
+
     def doPassiveScan(self, baseRequestResponse):
-        """
-        Passive scan implementation - called by Burp for each request/response
-        """
         try:
             response = baseRequestResponse.getResponse()
             if response is None:
                 return None
-            
+
             response_info = self._helpers.analyzeResponse(response)
-            headers = response_info.getHeaders()
-            
-            url = str(baseRequestResponse.getUrl())
-            url_path = URL(url).getPath() or '/'
-            base_url = "{}://{}{}".format(
-                URL(url).getProtocol(),
-                URL(url).getHost(),
-                url_path
-            )
-            
-            # Process headers and detect changes
+            headers       = response_info.getHeaders()
+
+            url      = str(baseRequestResponse.getUrl())
+            url_obj  = URL(url)
+            url_path = url_obj.getPath() or '/'
+            base_url = "{}://{}{}".format(url_obj.getProtocol(), url_obj.getHost(), url_path)
+
             issues = self._process_headers_passive(base_url, headers, baseRequestResponse)
-            
             return issues if issues else None
-            
+
         except Exception as e:
             print("[-] Error in passive scan: {}".format(str(e)))
             return None
-    
+
     def doActiveScan(self, baseRequestResponse, insertionPoint):
-        """
-        Active scan not implemented for this extension
-        """
         return None
-    
+
     def consolidateDuplicateIssues(self, existingIssue, newIssue):
-        """
-        Custom issue consolidation - keep the most recent issue
-        """
-        # If the issues are for the same URL and header, only keep the newer one
-        if (existingIssue.getUrl() == newIssue.getUrl() and 
-            existingIssue.getIssueDetail() == newIssue.getIssueDetail()):
-            return -1  # Keep existing issue
-        
-        return 0  # Keep both issues
-    
+        if (existingIssue.getUrl() == newIssue.getUrl() and
+                existingIssue.getIssueDetail() == newIssue.getIssueDetail()):
+            return -1
+        return 0
+
+    # ------------------------------------------------------------------
+    # Header processing
+    # ------------------------------------------------------------------
+
     def _process_headers_passive(self, url, headers, baseRequestResponse):
-        """
-        Process headers and return list of IScanIssue objects if changes detected
-        """
         issues = []
-        
+
         with self._lock:
-            # Extract tracked headers
             current_headers = {}
             for header in headers[1:]:
                 if ':' in header:
                     name, value = header.split(':', 1)
-                    name = name.strip().lower()
+                    name  = name.strip().lower()
                     value = value.strip()
-                    
                     if name in self._tracked_headers and self._tracked_headers[name]:
                         current_headers[name] = value
-            
-            # Compare with previous headers
+
             if url in self._header_storage:
                 previous_headers = self._header_storage[url]['headers']
-                change_records = self._compare_headers_passive(url, previous_headers, current_headers)
-                
-                # Create IScanIssue objects for each change
-                for change_record in change_records:
+                change_records   = self._compare_headers_passive(
+                    url, previous_headers, current_headers, baseRequestResponse
+                )
+
+                for cr in change_records:
                     issue = HeaderChangeScanIssue(
-                        baseRequestResponse,
-                        self._helpers,
-                        self._callbacks,
-                        change_record
+                        baseRequestResponse, self._helpers, self._callbacks, cr
                     )
                     issues.append(issue)
-                    
-                    # Also add to UI table
-                    self._detected_changes.append(change_record)
-                    SwingUtilities.invokeLater(lambda cr=change_record: self._add_change_to_table(cr))
-            
-            # Store current headers
+                    self._scan_issues[id(cr)] = issue
+                    self._detected_changes.append(cr)
+                    SwingUtilities.invokeLater(lambda _cr=cr: self._add_change_to_table(_cr))
+
             self._header_storage[url] = {
-                'headers': current_headers,
-                'timestamp': time.time()
+                'headers':   current_headers,
+                'timestamp': time.time(),
             }
-            
-            # Update UI stats
             SwingUtilities.invokeLater(self._update_stats)
-        
+
         return issues if issues else None
-    
-    def _compare_headers_passive(self, url, old_headers, new_headers):
-        """
-        Compare headers and return list of change records
-        """
-        changes = []
+
+    def _compare_headers_passive(self, url, old_headers, new_headers, baseRequestResponse):
+        changes     = []
         all_headers = set(old_headers.keys()) | set(new_headers.keys())
-        
+
         for header in all_headers:
             old_value = old_headers.get(header, '')
             new_value = new_headers.get(header, '')
-            
+
             if old_value != new_value:
-                change_record = {
-                    'timestamp': Date(),
-                    'url': url,
-                    'header': header,
-                    'old_value': old_value,
-                    'new_value': new_value,
-                    'risk_level': self._assess_risk_level(header, old_value, new_value)
+                cr = {
+                    'timestamp':           Date(),
+                    'url':                 url,
+                    'header':              header,
+                    'old_value':           old_value,
+                    'new_value':           new_value,
+                    'risk_level':          self._assess_risk_level(header, old_value, new_value),
+                    'baseRequestResponse': baseRequestResponse,
                 }
-                changes.append(change_record)
-        
+                changes.append(cr)
+
         return changes
-    
+
     def _assess_risk_level(self, header, old_value, new_value):
-        """Assess the risk level of a header change"""
-        # Critical: Security headers removed
         critical_headers = ['content-security-policy', 'x-frame-options']
         if header in critical_headers:
-            if old_value and not new_value:
-                return 'Critical'
-            return 'High'
-        
-        # High: Security cookie attributes weakened
+            return 'Critical' if (old_value and not new_value) else 'High'
+
         high_risk_headers = ['strict-transport-security', 'set-cookie']
         if header in high_risk_headers:
             if 'secure' in old_value.lower() and 'secure' not in new_value.lower():
@@ -377,273 +411,308 @@ class BurpExtender(IBurpExtender, ITab, IScannerCheck):
             if 'httponly' in old_value.lower() and 'httponly' not in new_value.lower():
                 return 'High'
             return 'Medium'
-        
-        # Medium: Other security headers modified
+
         medium_risk_headers = ['referrer-policy', 'x-content-type-options']
         if header in medium_risk_headers:
             return 'Medium'
-        
+
         return 'Low'
-    
-    def _add_change_to_table(self, change_record):
-        """Add a change record to the UI table"""
-        row_data = [
-            change_record['timestamp'].toString(),
-            change_record['url'],
-            change_record['header'],
-            change_record['old_value'][:100] + ('...' if len(change_record['old_value']) > 100 else ''),
-            change_record['new_value'][:100] + ('...' if len(change_record['new_value']) > 100 else ''),
-            change_record['risk_level']
+
+    # ------------------------------------------------------------------
+    # UI helpers
+    # ------------------------------------------------------------------
+
+    def _add_change_to_table(self, cr):
+        row = [
+            cr['timestamp'].toString(),
+            cr['url'],
+            cr['header'],
+            cr['old_value'][:100] + ('...' if len(cr['old_value']) > 100 else ''),
+            cr['new_value'][:100] + ('...' if len(cr['new_value']) > 100 else ''),
+            cr['risk_level'],
         ]
-        self._changes_table_model.addRow(row_data)
-    
+        self._changes_table_model.addRow(row)
+
     def _update_stats(self):
-        """Update statistics label"""
-        changes_count = len(self._detected_changes)
-        urls_count = len(self._header_storage)
         self._stats_label.setText(
-            "Changes detected: {} | URLs monitored: {}".format(changes_count, urls_count)
+            "Changes detected: {}  |  URLs monitored: {}".format(
+                len(self._detected_changes), len(self._header_storage)
+            )
         )
-    
+
+    # ------------------------------------------------------------------
+    # Button / action handlers
+    # ------------------------------------------------------------------
+
     def _clear_all_data(self, event):
-        """Clear all stored data and UI"""
         with self._lock:
             self._header_storage.clear()
             self._detected_changes[:] = []
+            self._scan_issues.clear()
             self._changes_table_model.setRowCount(0)
             self._update_stats()
-        
+
+        self._detail_text.setText("Select a row to view issue details.")
+        self._current_request_response = None
+        self._request_editor.setMessage(bytearray(), True)
+        self._response_editor.setMessage(bytearray(), False)
+
         JOptionPane.showMessageDialog(
-            self._main_panel,
-            "All data cleared successfully!",
-            "Clear Complete",
-            JOptionPane.INFORMATION_MESSAGE
+            self._main_panel, "All data cleared successfully!",
+            "Clear Complete", JOptionPane.INFORMATION_MESSAGE
         )
-    
+
     def _export_to_csv(self, event):
-        """Export detected changes to CSV file"""
         if not self._detected_changes:
             JOptionPane.showMessageDialog(
-                self._main_panel,
-                "No changes to export!",
-                "Export Error",
-                JOptionPane.WARNING_MESSAGE
+                self._main_panel, "No changes to export!",
+                "Export Error", JOptionPane.WARNING_MESSAGE
             )
             return
-        
-        file_chooser = JFileChooser()
-        file_chooser.setSelectedFile(File("header_changes.csv"))
-        
-        if file_chooser.showSaveDialog(self._main_panel) == JFileChooser.APPROVE_OPTION:
+
+        chooser = JFileChooser()
+        chooser.setSelectedFile(File("header_changes.csv"))
+
+        if chooser.showSaveDialog(self._main_panel) == JFileChooser.APPROVE_OPTION:
             try:
-                file_path = file_chooser.getSelectedFile().getAbsolutePath()
-                
-                with open(file_path, 'wb') as csvfile:
-                    writer = csv.writer(csvfile)
-                    writer.writerow(['Timestamp', 'URL', 'Header', 'Old Value', 'New Value', 'Risk Level'])
-                    
-                    for change in self._detected_changes:
-                        writer.writerow([
-                            str(change['timestamp']),
-                            change['url'],
-                            change['header'],
-                            change['old_value'],
-                            change['new_value'],
-                            change['risk_level']
+                path = chooser.getSelectedFile().getAbsolutePath()
+                with open(path, 'wb') as f:
+                    w = csv.writer(f)
+                    w.writerow(['Timestamp', 'URL', 'Header', 'Old Value', 'New Value', 'Risk Level'])
+                    for cr in self._detected_changes:
+                        w.writerow([
+                            str(cr['timestamp']), cr['url'], cr['header'],
+                            cr['old_value'], cr['new_value'], cr['risk_level']
                         ])
-                
+
                 JOptionPane.showMessageDialog(
                     self._main_panel,
-                    "Changes exported successfully to:\n{}".format(file_path),
-                    "Export Complete",
-                    JOptionPane.INFORMATION_MESSAGE
+                    "Changes exported successfully to:\n{}".format(path),
+                    "Export Complete", JOptionPane.INFORMATION_MESSAGE
                 )
-                
             except Exception as e:
                 JOptionPane.showMessageDialog(
-                    self._main_panel,
-                    "Export failed: {}".format(str(e)),
-                    "Export Error",
-                    JOptionPane.ERROR_MESSAGE
+                    self._main_panel, "Export failed: {}".format(str(e)),
+                    "Export Error", JOptionPane.ERROR_MESSAGE
                 )
-    
+
+
     def _add_custom_header(self, event):
-        """Add a custom header to track"""
+        """Add header to both the live dict and the JList immediately."""
         header_name = self._custom_header_field.getText().strip().lower()
-        
+
         if not header_name:
             JOptionPane.showMessageDialog(
-                self._main_panel,
-                "Please enter a header name!",
-                "Invalid Input",
-                JOptionPane.WARNING_MESSAGE
+                self._main_panel, "Please enter a header name!",
+                "Invalid Input", JOptionPane.WARNING_MESSAGE
             )
             return
-        
+
         if header_name in self._tracked_headers:
             JOptionPane.showMessageDialog(
                 self._main_panel,
                 "Header '{}' is already being tracked!".format(header_name),
-                "Duplicate Header",
-                JOptionPane.WARNING_MESSAGE
+                "Duplicate Header", JOptionPane.WARNING_MESSAGE
             )
             return
-        
+
+        # Update the live dict and the list model – no restart required
         self._tracked_headers[header_name] = True
+        self._header_list_model.addElement(header_name)
         self._custom_header_field.setText("")
-        
+
         JOptionPane.showMessageDialog(
             self._main_panel,
-            "Header '{}' added successfully!\nRestart the extension to see it in the settings.".format(header_name),
-            "Header Added",
-            JOptionPane.INFORMATION_MESSAGE
+            "Header '{}' added and is now being tracked.".format(header_name),
+            "Header Added", JOptionPane.INFORMATION_MESSAGE
         )
-    
-    def _save_settings(self, event):
-        """Save header tracking settings"""
-        for header, checkbox in self._header_checkboxes.items():
-            self._tracked_headers[header] = checkbox.isSelected()
-        
-        JOptionPane.showMessageDialog(
+
+    def _toggle_header(self, event):
+        """Toggle the enabled state of the selected header in-place."""
+        selected = self._header_jlist.getSelectedValue()
+        if selected is None:
+            return
+        self._tracked_headers[selected] = not self._tracked_headers.get(selected, True)
+        # Repaint to reflect the new state
+        self._header_jlist.repaint()
+
+    def _remove_header(self, event):
+        """Remove the selected header from tracking entirely."""
+        selected = self._header_jlist.getSelectedValue()
+        if selected is None:
+            return
+        confirm = JOptionPane.showConfirmDialog(
             self._main_panel,
-            "Settings saved successfully!",
-            "Settings Saved",
-            JOptionPane.INFORMATION_MESSAGE
+            "Remove '{}' from tracking?".format(selected),
+            "Confirm Remove", JOptionPane.YES_NO_OPTION
         )
-    
-    # ITab implementation
+        if confirm == JOptionPane.YES_OPTION:
+            self._tracked_headers.pop(selected, None)
+            self._header_list_model.removeElement(selected)
+
+    # ------------------------------------------------------------------
+    # ITab
+    # ------------------------------------------------------------------
+
     def getTabCaption(self):
-        """Return tab caption"""
         return self.EXTENSION_NAME
-    
+
     def getUiComponent(self):
-        """Return UI component"""
         return self._main_panel
 
 
-class RiskLevelCellRenderer(DefaultTableCellRenderer):
-    """Custom cell renderer for risk level column"""
-    
-    def getTableCellRendererComponent(self, table, value, isSelected, hasFocus, row, column):
-        component = DefaultTableCellRenderer.getTableCellRendererComponent(
-            self, table, value, isSelected, hasFocus, row, column
-        )
-        
-        if not isSelected:
-            if value == "Critical":
-                component.setBackground(Color(255, 200, 200))
-            elif value == "High":
-                component.setBackground(Color(255, 230, 200))
-            elif value == "Medium":
-                component.setBackground(Color(255, 255, 200))
-            else:
-                component.setBackground(Color(230, 255, 230))
-        
-        return component
+# Read-only table model  (subclassing is the correct Jython approach;
+# monkey-patching isCellEditable raises TypeError on Java methods)
 
+class ReadOnlyTableModel(DefaultTableModel):
+
+    def __init__(self, data, columns):
+        DefaultTableModel.__init__(self, data, columns)
+
+    def isCellEditable(self, row, column):
+        return False
+
+
+# Helper: table row selection listener
+
+class TableSelectionHandler(ListSelectionListener):
+
+    def __init__(self, extender):
+        self._extender = extender
+
+    def valueChanged(self, event):
+        if event.getValueIsAdjusting():
+            return
+        row = self._extender._changes_table.getSelectedRow()
+        if row >= 0:
+            SwingUtilities.invokeLater(lambda: self._extender._on_row_selected(row))
+
+
+# Risk level cell renderer – foreground colour only, theme-safe
+
+class RiskLevelCellRenderer(DefaultTableCellRenderer):
+
+    def getTableCellRendererComponent(self, table, value, isSelected, hasFocus, row, col):
+        comp = DefaultTableCellRenderer.getTableCellRendererComponent(
+            self, table, value, isSelected, hasFocus, row, col
+        )
+        comp.setFont(Font("Dialog", Font.BOLD, 12))
+        if not isSelected:
+            # Reset to table defaults first
+            comp.setBackground(table.getBackground())
+            fg, _ = _get_risk_colors(str(value) if value else "")
+            comp.setForeground(fg if fg else table.getForeground())
+        else:
+            comp.setForeground(table.getSelectionForeground())
+            comp.setBackground(table.getSelectionBackground())
+        return comp
+
+
+# Settings list renderer – shows checkbox state inline
+
+class HeaderListCellRenderer(JCheckBox, ListCellRenderer):
+    """
+    Renders each header entry as a checkbox showing its enabled state.
+    Must explicitly declare ListCellRenderer in the class signature so Jython
+    exposes it to Java's type system — inheriting JCheckBox alone is not enough.
+    """
+
+    def __init__(self, tracked_headers):
+        JCheckBox.__init__(self)
+        self._tracked = tracked_headers
+        self.setOpaque(True)
+
+    def getListCellRendererComponent(self, lst, value, index, isSelected, cellHasFocus):
+        self.setText(str(value))
+        self.setSelected(self._tracked.get(str(value), False))
+        if isSelected:
+            self.setBackground(lst.getSelectionBackground())
+            self.setForeground(lst.getSelectionForeground())
+        else:
+            self.setBackground(lst.getBackground())
+            self.setForeground(lst.getForeground())
+        return self
+
+
+# Custom IScanIssue
 
 class HeaderChangeScanIssue(IScanIssue):
-    """Custom scan issue for header changes"""
-    
+
     def __init__(self, baseRequestResponse, helpers, callbacks, change_record):
-        self._baseRequestResponse = baseRequestResponse
-        self._helpers = helpers
-        self._callbacks = callbacks
-        self._change_record = change_record
-        self._url = baseRequestResponse.getUrl()
-        self._httpService = baseRequestResponse.getHttpService()
-    
+        self._brr          = baseRequestResponse
+        self._helpers      = helpers
+        self._callbacks    = callbacks
+        self._cr           = change_record
+        self._url          = baseRequestResponse.getUrl()
+        self._httpService  = baseRequestResponse.getHttpService()
+
     def getUrl(self):
         return self._url
-    
+
     def getIssueName(self):
-        return "HTTP Header Change Detected: {}".format(self._change_record['header'])
-    
+        return "HTTP Header Change Detected: {}".format(self._cr['header'])
+
     def getIssueType(self):
-        return 0x08000000  # Extension-generated issue
-    
+        return 0x08000000
+
     def getSeverity(self):
-        risk_level = self._change_record['risk_level']
-        if risk_level == "Critical":
-            return "High"
-        elif risk_level == "High":
-            return "Medium"
-        elif risk_level == "Medium":
-            return "Low"
-        else:
-            return "Information"
-    
+        mapping = {"Critical": "High", "High": "Medium", "Medium": "Low", "Low": "Information"}
+        return mapping.get(self._cr['risk_level'], "Information")
+
     def getConfidence(self):
         return "Certain"
-    
+
     def getIssueBackground(self):
-        return """
-        <p>The HTTP response header <b>{}</b> has changed between requests to the same URL.</p>
-        <p>This could indicate:</p>
-        <ul>
-            <li>Security misconfigurations</li>
-            <li>Server changes or updates</li>
-            <li>Load balancer behavior</li>
-            <li>Potential security issues</li>
-        </ul>
-        <p>Security headers are critical for protecting against various web attacks. 
-        Changes to these headers should be investigated to ensure they don't introduce vulnerabilities.</p>
-        """.format(self._change_record['header'])
-    
+        return (
+            "<p>The HTTP response header <b>{}</b> changed between requests to the same URL.</p>"
+            "<p>This may indicate security misconfigurations, server changes, load balancer "
+            "behaviour, or policy drift. Security header changes should be reviewed to ensure "
+            "they do not introduce vulnerabilities.</p>"
+        ).format(self._cr['header'])
+
     def getRemediationBackground(self):
-        return """
-        <p>Review the header changes carefully:</p>
-        <ul>
-            <li>Ensure security headers are not weakened or removed</li>
-            <li>Verify that cookie attributes remain secure (HttpOnly, Secure, SameSite)</li>
-            <li>Check that CSP policies are not relaxed unnecessarily</li>
-            <li>Confirm that changes are intentional and documented</li>
-        </ul>
-        """
-    
-    def getIssueDetail(self):
-        old_val = self._change_record['old_value']
-        new_val = self._change_record['new_value']
-        
-        # Truncate long values for readability
-        if len(old_val) > 200:
-            old_val = old_val[:200] + "..."
-        if len(new_val) > 200:
-            new_val = new_val[:200] + "..."
-        
-        return """
-        <p><b>Header:</b> {}</p>
-        <p><b>Risk Level:</b> {}</p>
-        <p><b>Previous Value:</b></p>
-        <pre>{}</pre>
-        <p><b>New Value:</b></p>
-        <pre>{}</pre>
-        <p><b>Detected:</b> {}</p>
-        """.format(
-            self._change_record['header'],
-            self._change_record['risk_level'],
-            old_val if old_val else "(header was not present)",
-            new_val if new_val else "(header removed)",
-            self._change_record['timestamp'].toString()
+        return (
+            "<p>Review header changes carefully:</p>"
+            "<ul>"
+            "<li>Ensure security headers are not weakened or removed.</li>"
+            "<li>Verify cookie attributes remain secure (HttpOnly, Secure, SameSite).</li>"
+            "<li>Check that CSP policies are not relaxed unnecessarily.</li>"
+            "<li>Confirm all changes are intentional and documented.</li>"
+            "</ul>"
         )
-    
+
+    def getIssueDetail(self):
+        old = self._cr['old_value'][:200] + ("..." if len(self._cr['old_value']) > 200 else "")
+        new = self._cr['new_value'][:200] + ("..." if len(self._cr['new_value']) > 200 else "")
+        return (
+            "<p><b>Header:</b> {}</p>"
+            "<p><b>Risk Level:</b> {}</p>"
+            "<p><b>Previous Value:</b></p><pre>{}</pre>"
+            "<p><b>New Value:</b></p><pre>{}</pre>"
+            "<p><b>Detected:</b> {}</p>"
+        ).format(
+            self._cr['header'],
+            self._cr['risk_level'],
+            old if old else "(header was not present)",
+            new if new else "(header was removed)",
+            self._cr['timestamp'].toString(),
+        )
+
     def getRemediationDetail(self):
-        header = self._change_record['header']
-        
-        recommendations = {
-            'content-security-policy': 'Ensure CSP directives are not weakened. Avoid using unsafe-inline or unsafe-eval.',
-            'x-frame-options': 'Maintain DENY or SAMEORIGIN to prevent clickjacking attacks.',
-            'set-cookie': 'Ensure cookies have Secure, HttpOnly, and SameSite attributes.',
-            'strict-transport-security': 'Keep HSTS enabled with appropriate max-age value.',
-            'x-content-type-options': 'Maintain "nosniff" to prevent MIME type confusion attacks.',
+        recs = {
+            'content-security-policy':    'Ensure CSP directives are not weakened. Avoid unsafe-inline or unsafe-eval.',
+            'x-frame-options':            'Maintain DENY or SAMEORIGIN to prevent clickjacking.',
+            'set-cookie':                 'Ensure cookies carry Secure, HttpOnly, and SameSite attributes.',
+            'strict-transport-security':  'Keep HSTS enabled with an appropriate max-age value.',
+            'x-content-type-options':     'Maintain "nosniff" to prevent MIME-type confusion attacks.',
         }
-        
-        specific = recommendations.get(header, 'Review the header change and ensure it aligns with security best practices.')
-        
-        return "<p>{}</p>".format(specific)
-    
+        return "<p>{}</p>".format(
+            recs.get(self._cr['header'],
+                     "Review this header change against your security policy.")
+        )
+
     def getHttpMessages(self):
-        return [self._baseRequestResponse]
-    
+        return [self._brr]
+
     def getHttpService(self):
         return self._httpService
