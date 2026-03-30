@@ -3,7 +3,7 @@ ExtensionType: 2
 Name: Header Change Notifier
 RepoName: header-change-notifier
 ScreenVersion: 2.1.0
-SerialVersion: 5
+SerialVersion: 6
 MinPlatformVersion: 2
 ProOnly: True
 Author: MohamedXploit
